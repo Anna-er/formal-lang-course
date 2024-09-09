@@ -1,5 +1,6 @@
 import cfpq_data as cd
 import networkx as nx
+
 from typing import Tuple
 
 

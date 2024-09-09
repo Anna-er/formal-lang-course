@@ -7,6 +7,7 @@ class TestGraphUtils:
         info = task1.graph_data("gzip")
         gzip = (2687, 2293, ["d", "a"])
         assert info == gzip
+
     def test_bzip(self):
         info = task1.graph_data("bzip")
         bzip = (632, 556, ["d", "a"])
