@@ -14,4 +14,3 @@ def test_regex_to_dfa():
     assert not dfa.accepts("aa")
     assert not dfa.accepts("d")
     assert not dfa.accepts("ab")
-

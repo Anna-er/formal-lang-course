@@ -1,7 +1,8 @@
 from pyformlang.finite_automaton import (
-    DeterministicFiniteAutomaton, 
-    NondeterministicFiniteAutomaton, 
-    State, Symbol
+    DeterministicFiniteAutomaton,
+    NondeterministicFiniteAutomaton,
+    State,
+    Symbol,
 )
 from pyformlang.regular_expression import Regex
 from typing import Set
@@ -16,9 +17,7 @@ def regex_to_dfa(regex: str) -> DeterministicFiniteAutomaton:
 
 
 def graph_to_nfa(
-    graph: MultiDiGraph, 
-    start_states: Set[int] = None, 
-    final_states: Set[int] = None
+    graph: MultiDiGraph, start_states: Set[int] = None, final_states: Set[int] = None
 ) -> NondeterministicFiniteAutomaton:
     nfa = NondeterministicFiniteAutomaton()
 
@@ -28,11 +27,13 @@ def graph_to_nfa(
 
     if not start_states:
         start_states = set(graph.nodes)
+
     for state in start_states:
         nfa.add_start_state(State(state))
 
     if not final_states:
         final_states = set(graph.nodes)
+
     for state in final_states:
         nfa.add_final_state(State(state))
 
