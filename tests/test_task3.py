@@ -21,6 +21,7 @@ def test_accept():
     assert not amf_1.accepts(__str_to_symbols("c"))
     assert amf_1.accepts(__str_to_symbols("b"))
 
+
 def test_not_empty_fa():
     fa = NondeterministicFiniteAutomaton()
     fa.add_transitions([(0, "a", 1), (0, "b", 2), (1, "c", 2), (1, "a", 0)])
