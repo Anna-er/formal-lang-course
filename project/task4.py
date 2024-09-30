@@ -15,10 +15,8 @@ def create_bool_vector(vector_size, true_indexes):
 def ms_bfs_based_rpq(
     regex: str, graph: MultiDiGraph, start_nodes: set[int], final_nodes: set[int]
 ) -> set[tuple[int, int]]:
-
     regex_dfa = regex_to_dfa(regex)
     dfa_adjacency_matrix_fa = AdjacencyMatrixFA(regex_dfa)
-
 
     graph_nfa = graph_to_nfa(graph, start_nodes, final_nodes)
     nfa_adjacency_matrix_fa = AdjacencyMatrixFA(graph_nfa)
@@ -30,9 +28,9 @@ def ms_bfs_based_rpq(
     nfa_start_states_ind = nfa_adjacency_matrix_fa.start_states
     nfa_start_states_number = len(nfa_start_states_ind)
 
-    # dfa_index_to_state = {index: state for state, index in dfa_adjacency_matrix_fa.states.items()}
-    nfa_index_to_state = {index: state for state, index in nfa_adjacency_matrix_fa.states.items()}
-
+    nfa_index_to_state = {
+        index: state for state, index in nfa_adjacency_matrix_fa.states.items()
+    }
 
     def create_start_front():
         data = np.ones(nfa_start_states_number, dtype=bool)
@@ -43,12 +41,10 @@ def ms_bfs_based_rpq(
             (data, (rows, columns)), shape=(k * nfa_start_states_number, n), dtype=bool
         )
 
-
     labels = (
         dfa_adjacency_matrix_fa.matricies.keys()
         & nfa_adjacency_matrix_fa.matricies.keys()
     )
-
 
     dfa_decomposed_matrices = dfa_adjacency_matrix_fa.matricies
     dfa_decomposed_transposed_matrices = {
@@ -57,11 +53,11 @@ def ms_bfs_based_rpq(
 
     nfa_decomposed_matrices = nfa_adjacency_matrix_fa.matricies
 
-
     def update_front(front):
         decomposed_fronts = {}
         for label in labels:
             decomposed_fronts[label] = front @ nfa_decomposed_matrices[label]
+
             for ind in range(nfa_start_states_number):
                 decomposed_fronts[label][ind * k : (ind + 1) * k] = (
                     dfa_decomposed_transposed_matrices[label]
@@ -75,20 +71,19 @@ def ms_bfs_based_rpq(
 
         return new_front
 
-
     current_front = create_start_front()
     visited = sparse.csr_matrix((k * nfa_start_states_number, n), dtype=bool)
 
-
     while current_front.count_nonzero() > 0:
         visited += current_front
+
         current_front = update_front(current_front)
+
         current_front = current_front > visited
 
     dfa_final_states_ind = dfa_adjacency_matrix_fa.final_states
 
     res = set()
-
 
     nfa_final_states_ind = nfa_adjacency_matrix_fa.final_states
     nfa_final_states_vector = create_bool_vector(
