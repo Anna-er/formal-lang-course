@@ -4,12 +4,12 @@ from pyformlang.cfg import Production, Variable, Epsilon, CFG, Terminal
 
 
 def cfg_to_weak_normal_form(cfg: pyformlang.cfg.CFG) -> pyformlang.cfg.CFG:
-    updated_productions = set(cfg.to_normal_form().productions)
-    for nullable_var in cfg.get_nullable_symbols():
-        updated_productions.add(Production(Variable(nullable_var.value), [Epsilon()]))
+    modified_productions = set(cfg.to_normal_form().productions)
+    for null_var in cfg.get_nullable_symbols():
+        modified_productions.add(Production(Variable(null_var.value), [Epsilon()]))
 
     return CFG(
-        start_symbol=cfg.start_symbol, productions=updated_productions
+        start_symbol=cfg.start_symbol, productions=modified_productions
     ).remove_useless_symbols()
 
 
@@ -19,16 +19,16 @@ def hellings_based_cfpq(
     start_nodes: set[int] = None,
     final_nodes: set[int] = None,
 ) -> set[tuple[int, int]]:
-    weak_cnf_cfg = cfg_to_weak_normal_form(cfg)
+    wcnf_cfg = cfg_to_weak_normal_form(cfg)
 
     term_to_vars = {}
     pair_to_vars = {}
 
-    for production in weak_cnf_cfg.productions:
-        if len(production.body) == 1 and isinstance(production.body[0], Terminal):
-            term_to_vars.setdefault(production.body[0], set()).add(production.head)
-        elif len(production.body) == 2:
-            pair_to_vars.setdefault(tuple(production.body), set()).add(production.head)
+    for prod in wcnf_cfg.productions:
+        if len(prod.body) == 1 and isinstance(prod.body[0], Terminal):
+            term_to_vars.setdefault(prod.body[0], set()).add(prod.head)
+        elif len(prod.body) == 2:
+            pair_to_vars.setdefault(tuple(prod.body), set()).add(prod.head)
 
     graph_edges = {
         (v1, Terminal(label), v2) for v1, v2, label in graph.edges.data("label")
@@ -39,7 +39,7 @@ def hellings_based_cfpq(
         for v1, term, v2 in graph_edges
         if term in term_to_vars
         for var in term_to_vars[term]
-    } | {(v, var, v) for v in graph.nodes for var in weak_cnf_cfg.get_nullable_symbols()}
+    } | {(v, var, v) for v in graph.nodes for var in wcnf_cfg.get_nullable_symbols()}
 
     queue = list(new_edges)
 
@@ -63,7 +63,7 @@ def hellings_based_cfpq(
             update_queue(e, edge, buffer)
         new_edges |= buffer
 
-    start_var = weak_cnf_cfg.start_symbol
+    start_var = wcnf_cfg.start_symbol
     return {
         (v1, v2)
         for v1, var, v2 in new_edges
