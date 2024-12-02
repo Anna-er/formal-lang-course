@@ -24,5 +24,8 @@ jobs:
       - name: Sync dependencies
         run: rye sync
 
+      - name: Use ANTLR
+        run: rye run -- antlr4 -Dlanguage=Python3 project/QueryGraphLang.g4
+
       - name: Run tests
         run: python scripts/run_tests.py
