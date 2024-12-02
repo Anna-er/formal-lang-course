@@ -15,6 +15,9 @@ antlr4-python3-runtime==4.13.1
     # via grammarinator
 autopep8==2.3.1
     # via grammarinator
+antlr4-tools==0.2.1
+install-jdk==1.1.0
+    # via antlr4-tools
 certifi==2024.7.4
     # via requests
 cfgv==3.4.0
