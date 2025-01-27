@@ -1,110 +1,117 @@
-import numpy as np
-from scipy import sparse
-from project.task3 import AdjacencyMatrixFA
-from project.task2 import graph_to_nfa, regex_to_dfa
+from copy import copy
+from functools import reduce
+from typing import Generic, TypeVar
 from networkx import MultiDiGraph
+from pyformlang.finite_automaton import Symbol
+import scipy.sparse as sp
+
+from project.task2 import regex_to_dfa, graph_to_nfa
+from project.task3 import AdjacencyMatrixFA
+
+Matrix = TypeVar("Matrix")
 
 
-def create_bool_vector(vector_size, true_indexes):
-    vector = np.zeros(vector_size, dtype=bool)
-    for true_ind in true_indexes:
-        vector[true_ind] = True
-    return vector
+class MsBfsRpq(Generic[Matrix]):
+    __matrix_type: Matrix
+    __adj_dfa: AdjacencyMatrixFA
+    __adj_nfa: AdjacencyMatrixFA
+    __shift: int
+    __united_symbols: set[Symbol]
+
+    def __init__(
+        self,
+        adj_dfa: AdjacencyMatrixFA,
+        adj_nfa: AdjacencyMatrixFA,
+        matrix_type=sp.csr_matrix,
+    ):
+        self.__matrix_type = matrix_type
+        self.__adj_dfa = adj_dfa
+        self.__adj_nfa = adj_nfa
+        self.__start_states_list = list(adj_nfa.start_states)
+        self.__shift = self.__adj_dfa.states_number
+        self.__united_symbols = set(self.__adj_dfa.adj_matrices.keys()).intersection(
+            self.__adj_nfa.adj_matrices.keys()
+        )
+        self.__permutation_matrices = {
+            symbol: sp.block_diag(
+                [
+                    adj_dfa.adj_matrices[symbol].transpose()
+                    for _ in self.__start_states_list
+                ]
+            )
+            for symbol in self.__united_symbols
+        }
+
+    def __update_front(self, front_right: Matrix) -> Matrix:
+        def front_mul_matrix(cur_front, symbol) -> Matrix:
+            mul = cur_front @ self.__adj_nfa.adj_matrices[symbol]
+            return self.__permutation_matrices[symbol] @ mul
+
+        updated_front = reduce(
+            lambda vector, matrix: vector + front_mul_matrix(front_right, matrix),
+            self.__united_symbols,
+            self.__matrix_type(front_right.shape, dtype=bool),
+        )
+
+        return updated_front
+
+    def __get_init_front(self) -> Matrix:
+        vectors = []
+        for nfa_state_num in range(len(self.__adj_nfa.start_states)):
+            right_vector = self.__matrix_type(
+                (self.__shift, self.__adj_nfa.states_number), dtype=bool
+            )
+            for i in self.__adj_dfa.start_states:
+                right_vector[i, self.__start_states_list[nfa_state_num]] = True
+
+            vectors.append(right_vector)
+
+        return sp.vstack(vectors)
+
+    def __visited_to_result(self, visited: Matrix):
+        result = set()
+        for left, nfa_state in zip(*visited.nonzero()):
+            if (
+                left % self.__shift in self.__adj_dfa.final_states
+                and nfa_state in self.__adj_nfa.final_states
+            ):
+                result.add(
+                    (
+                        self.__adj_nfa.num_to_state[
+                            self.__start_states_list[left // self.__shift]
+                        ],
+                        self.__adj_nfa.num_to_state[nfa_state],
+                    )
+                )
+        return result
+
+    def __ms_bfs(self):
+        front_right = self.__get_init_front()
+        visited = copy(front_right)
+
+        while front_right.count_nonzero():
+            front_right = self.__update_front(front_right)
+            front_right = front_right > visited
+            visited += front_right
+
+        return self.__visited_to_result(visited)
+
+    def __call__(self) -> set[tuple[int, int]]:
+        return self.__ms_bfs()
 
 
 def ms_bfs_based_rpq(
-    regex: str, graph: MultiDiGraph, start_nodes: set[int], final_nodes: set[int]
+    regex: str,
+    graph: MultiDiGraph,
+    start_nodes: set[int],
+    final_nodes: set[int],
+    matrix_type=sp.csr_matrix,
 ) -> set[tuple[int, int]]:
     regex_dfa = regex_to_dfa(regex)
-    dfa_adjacency_matrix_fa = AdjacencyMatrixFA(regex_dfa)
-
+    adj_dfa = AdjacencyMatrixFA(regex_dfa, matrix_type)
     graph_nfa = graph_to_nfa(graph, start_nodes, final_nodes)
-    nfa_adjacency_matrix_fa = AdjacencyMatrixFA(graph_nfa)
+    adj_nfa = AdjacencyMatrixFA(graph_nfa, matrix_type)
 
-    k = dfa_adjacency_matrix_fa.states_count
-    n = nfa_adjacency_matrix_fa.states_count
+    result = MsBfsRpq(adj_dfa, adj_nfa, matrix_type)()
 
-    dfa_start_state_ind = list(dfa_adjacency_matrix_fa.start_states)[0]
-    nfa_start_states_ind = nfa_adjacency_matrix_fa.start_states
-    nfa_start_states_number = len(nfa_start_states_ind)
-
-    nfa_index_to_state = {
-        index: state for state, index in nfa_adjacency_matrix_fa.states.items()
-    }
-
-    def create_start_front():
-        data = np.ones(nfa_start_states_number, dtype=bool)
-        rows = [dfa_start_state_ind + k * j for j in range(nfa_start_states_number)]
-        columns = [start_state_ind for start_state_ind in nfa_start_states_ind]
-
-        return sparse.csr_matrix(
-            (data, (rows, columns)), shape=(k * nfa_start_states_number, n), dtype=bool
-        )
-
-    labels = (
-        dfa_adjacency_matrix_fa.matricies.keys()
-        & nfa_adjacency_matrix_fa.matricies.keys()
-    )
-
-    dfa_decomposed_matrices = dfa_adjacency_matrix_fa.matricies
-    dfa_decomposed_transposed_matrices = {
-        key: mat.transpose() for key, mat in dfa_decomposed_matrices.items()
-    }
-
-    nfa_decomposed_matrices = nfa_adjacency_matrix_fa.matricies
-
-    def update_front(front):
-        decomposed_fronts = {}
-        for label in labels:
-            decomposed_fronts[label] = front @ nfa_decomposed_matrices[label]
-
-            for ind in range(nfa_start_states_number):
-                decomposed_fronts[label][ind * k : (ind + 1) * k] = (
-                    dfa_decomposed_transposed_matrices[label]
-                    @ decomposed_fronts[label][ind * k : (ind + 1) * k]
-                )
-
-        new_front = sparse.csr_matrix((k * nfa_start_states_number, n), dtype=bool)
-
-        for decomposed_front in decomposed_fronts.values():
-            new_front += decomposed_front
-
-        return new_front
-
-    current_front = create_start_front()
-    visited = sparse.csr_matrix((k * nfa_start_states_number, n), dtype=bool)
-
-    while current_front.count_nonzero() > 0:
-        visited += current_front
-
-        current_front = update_front(current_front)
-
-        current_front = current_front > visited
-
-    dfa_final_states_ind = dfa_adjacency_matrix_fa.final_states
-
-    res = set()
-
-    nfa_final_states_ind = nfa_adjacency_matrix_fa.final_states
-    nfa_final_states_vector = create_bool_vector(
-        nfa_adjacency_matrix_fa.states_count, nfa_final_states_ind
-    )
-
-    for i, nfa_start_state_ind in enumerate(nfa_start_states_ind, 0):
-        for dfa_final_state_ind in dfa_final_states_ind:
-            row = visited.getrow(i * k + dfa_final_state_ind)
-            row_vector = create_bool_vector(n, row.indices)
-
-            vector = row_vector & nfa_final_states_vector
-
-            reached_nfa_final_states_ind = np.nonzero(vector)[0]
-
-            for reached_nfa_final_state_ind in reached_nfa_final_states_ind:
-                res.add(
-                    (
-                        nfa_index_to_state[nfa_start_state_ind],
-                        nfa_index_to_state[reached_nfa_final_state_ind],
-                    )
-                )
-
-    return res
+    return result

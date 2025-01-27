@@ -1,168 +1,228 @@
-from project.task2 import NondeterministicFiniteAutomaton, regex_to_dfa, graph_to_nfa
-import scipy.sparse as sp
-from collections.abc import Iterable
-from pyformlang.finite_automaton import Symbol
-from functools import reduce
+from collections import defaultdict
+from dataclasses import dataclass
+from itertools import product
+from typing import Iterable, List, Optional, Self, Generic, TypeVar, cast
 from networkx import MultiDiGraph
-import itertools
+from pyformlang.finite_automaton import NondeterministicFiniteAutomaton, State, Symbol
+import scipy.sparse as sp
+
+from project.task2 import regex_to_dfa, graph_to_nfa
+
+Matrix = TypeVar("Matrix")
 
 
-class AdjacencyMatrixFA:
-    def __init__(self, automation: NondeterministicFiniteAutomaton = None):
-        self.matricies = {}
+class AdjacencyMatrixFA(Generic[Matrix]):
+    _matrix_type: Matrix
+    _adj_matrices: dict[Symbol, Matrix]
+    _states_number: int
+    _start_states: set[int]
+    _final_states: set[int]
+    _states_to_num: dict[State, int]
+    _num_to_state: List[State]
 
-        if automation is None:
-            self.states = {}
-            self.alphabet = set()
-            self.start_states = set()
-            self.final_states = set()
-            self.states_count = 0
+    @staticmethod
+    def __enumerate_value(value) -> dict[State, int]:
+        return {val: idx for idx, val in enumerate(value)}
+
+    def __get_symbol_adj_matrix_dict(self, nfa) -> dict[Symbol, Matrix]:
+        symbol_state = defaultdict(
+            lambda: self._matrix_type((len(nfa.states), len(nfa.states)), dtype=bool)
+        )
+        for start_state, value in nfa.to_dict().items():
+            for symbol, end_states in value.items():
+                start_state_int = self._states_to_num[start_state]
+                if type(end_states) is State:
+                    end_states = {end_states}
+                for end_st in end_states:
+                    end_state_int = self._states_to_num[end_st]
+                    symbol_state[symbol][start_state_int, end_state_int] = True
+        return symbol_state
+
+    def __init__(
+        self,
+        nfa: Optional[NondeterministicFiniteAutomaton],
+        matrix_type: Matrix = sp.lil_matrix,
+    ):
+        self._matrix_type = matrix_type
+        self._adj_matrices = dict()
+        if nfa is None:
+            self._states_number = 0
+            self._start_states = set()
+            self._final_states = set()
             return
 
-        self.states = {st: i for (i, st) in enumerate(automation.states)}
-        self.states_count = len(self.states)
-        self.alphabet = automation.symbols
+        self._states_to_num = self.__enumerate_value(nfa.states)
+        self._num_to_state = [el for el in nfa.states]
 
-        graph = automation.to_networkx()
+        self._states_number = len(nfa.states)
 
-        for s in self.alphabet:
-            self.matricies[s] = sp.csr_matrix(
-                (self.states_count, self.states_count), dtype=bool
-            )
+        self._start_states = set(self._states_to_num[i] for i in nfa.start_states)
+        self._final_states = set(self._states_to_num[i] for i in nfa.final_states)
 
-        for u, v, label in graph.edges(data="label"):
-            if not (str(u).startswith("starting_") or str(v).startswith("starting_")):
-                self.matricies[label][self.states[u], self.states[v]] = True
+        self._adj_matrices = self.__get_symbol_adj_matrix_dict(nfa)
 
-        self.start_states = {self.states[key] for key in automation.start_states}
-        self.final_states = {self.states[key] for key in automation.final_states}
+    def __dfs_find_path(self, word: Iterable[Symbol]):
+        @dataclass
+        class Configuration:
+            word: List[Symbol]
+            state: int
 
-    def accepts(self, word: Iterable[Symbol]) -> bool:
-        """
-        Check if the given word is accepted by the automaton.
-        """
-        symbols = list(word)
+        stack = [
+            Configuration(list(word), start_state) for start_state in self._start_states
+        ]
 
-        configs = [(symbols, st) for st in self.start_states]
+        while len(stack):
+            cur_conf = stack.pop()
 
-        while len(configs) > 0:
-            rest, state = configs.pop()
+            if not len(cur_conf.word):
+                if cur_conf.state in self._final_states:
+                    return True
+                continue
 
-            if len(rest) == 0 and state in self.final_states:
-                return True
+            next_symbol = cur_conf.word[0]
+            if next_symbol not in self._adj_matrices.keys():
+                continue
 
-            for assume_next in self.states.values():
-                if self.matricies[rest[0]][state, assume_next]:
-                    configs.append((rest[1:], assume_next))
+            for i in range(self._states_number):
+                if self._adj_matrices[next_symbol][cur_conf.state, i]:
+                    stack.append(Configuration(cur_conf.word[1:], i))
 
         return False
 
+    def accepts(self, word: Iterable[Symbol]) -> bool:
+        return self.__dfs_find_path(word)
+
+    def __pow_closure(self, matrix):
+        cur = matrix
+        power = 1
+        for i in range(2, self._states_number + 1):
+            power *= i
+            prev = cur
+            cur = sp.linalg.matrix_power(prev, i)
+            if power > self._states_number:
+                break
+            if prev.nnz == cur.nnz:
+                if (cur != prev).nnz == 0:
+                    break
+        return cur
+
+    def transitive_closure(self) -> Matrix:
+        if self._adj_matrices:
+            sum_matrix = cast(Matrix, sum(self._adj_matrices.values()))
+            sum_matrix.setdiag(True)
+            res = self.__pow_closure(sum_matrix)
+            return res
+        else:
+            return sp.identity(self._states_number)
+
     def is_empty(self) -> bool:
-        """
-        Check if the automaton is empty (accepts no words).
-        """
-        tr_clos = self.transitive_closure()
+        if not self._adj_matrices:
+            return True
+        transitive_closure_matrix = self.transitive_closure()
 
-        for st, fn in itertools.product(self.start_states, self.final_states):
-            if tr_clos[st, fn]:
-                return False
-
-        return True
-
-    def transitive_closure(self):
-        """
-        Compute the transitive closure of the automaton.
-        """
-        reach = sp.csr_matrix((self.states_count, self.states_count), dtype=bool)
-        reach.setdiag(True)
-
-        if not self.matricies:
-            return reach
-
-        reach: sp.csr_matrix = reach + reduce(
-            lambda x, y: x + y, self.matricies.values()
+        return not any(
+            transitive_closure_matrix[s, e]
+            for s, e in product(self._start_states, self._final_states)
         )
 
-        for k in range(self.states_count):
-            for i in range(self.states_count):
-                for j in range(self.states_count):
-                    reach[i, j] = reach[i, j] or (reach[i, k] and reach[k, j])
+    @classmethod
+    def from_intersect(
+        cls, automaton1: Self, automaton2: Self, matrix_type: Matrix = sp.lil_matrix
+    ):
+        instance = cls(None, matrix_type)
+        united_syms = [
+            sym
+            for sym in set(automaton1._adj_matrices.keys()).intersection(
+                automaton2._adj_matrices.keys()
+            )
+        ]
 
-        return reach
+        instance._adj_matrices = {
+            sym: instance._matrix_type(
+                sp.kron(automaton1._adj_matrices[sym], automaton2._adj_matrices[sym])
+            )
+            for sym in united_syms
+        }
+
+        def state_to_num(st1, st2):
+            return st1 * automaton2._states_number + st2
+
+        def intersect_states(states1, states2):
+            return set(state_to_num(st1, st2) for st1, st2 in product(states1, states2))
+
+        instance._states_to_num = {
+            State((st1[0], st2[0])): state_to_num(st1[1], st2[1])
+            for st1, st2 in product(
+                automaton1._states_to_num.items(), automaton2._states_to_num.items()
+            )
+        }
+        instance._num_to_state = [
+            State(el)
+            for el in product(automaton1._num_to_state, automaton2._num_to_state)
+        ]
+
+        instance._start_states = intersect_states(
+            automaton1._start_states, automaton2._start_states
+        )
+        instance._final_states = intersect_states(
+            automaton1._final_states, automaton2._final_states
+        )
+        instance._states_number = automaton1._states_number * automaton2._states_number
+        return instance
+
+    @property
+    def states_number(self):
+        return self._states_number
+
+    @property
+    def start_states(self):
+        return self._start_states
+
+    @property
+    def final_states(self):
+        return self._final_states
+
+    @property
+    def states_to_num(self):
+        return self._states_to_num
+
+    @property
+    def adj_matrices(self):
+        return self._adj_matrices
+
+    @property
+    def num_to_state(self):
+        return self._num_to_state
 
 
 def intersect_automata(
     automaton1: AdjacencyMatrixFA, automaton2: AdjacencyMatrixFA
 ) -> AdjacencyMatrixFA:
-    """
-    Intersects two automata and returns the result as a new automaton.
-    """
-    A1, A2 = automaton1.matricies, automaton2.matricies
-
-    intersect = AdjacencyMatrixFA()
-
-    intersect.states_count = automaton1.states_count * automaton2.states_count
-
-    for k in A1.keys():
-        if A2.get(k) is None:
-            continue
-        intersect.matricies[k] = sp.kron(A1[k], A2[k], format="csr")
-
-    intersect.states = {
-        (i1, i2): (
-            automaton1.states[i1] * automaton2.states_count + automaton2.states[i2]
-        )
-        for i1, i2 in itertools.product(
-            automaton1.states.keys(), automaton2.states.keys()
-        )
-    }
-
-    intersect.start_states = [
-        (s1 * automaton2.states_count + s2)
-        for s1, s2 in itertools.product(
-            automaton1.start_states, automaton2.start_states
-        )
-    ]
-    intersect.final_states = [
-        (f1 * automaton2.states_count + f2)
-        for f1, f2 in itertools.product(
-            automaton1.final_states, automaton2.final_states
-        )
-    ]
-
-    intersect.alphabet = automaton1.alphabet.union(automaton2.alphabet)
-
-    return intersect
+    return AdjacencyMatrixFA.from_intersect(automaton1, automaton2)
 
 
 def tensor_based_rpq(
-    regex: str, graph: MultiDiGraph, start_nodes: set[int], final_nodes: set[int]
+    regex: str,
+    graph: MultiDiGraph,
+    start_nodes: set[int],
+    final_nodes: set[int],
+    matrix_type=sp.lil_matrix,
 ) -> set[tuple[int, int]]:
-    adj_matrix_by_reg = AdjacencyMatrixFA(regex_to_dfa(regex))
-    adj_matrix_by_graph = AdjacencyMatrixFA(
-        graph_to_nfa(graph, start_nodes, final_nodes)
-    )
+    regex_dfa = regex_to_dfa(regex)
+    adj_regex = AdjacencyMatrixFA(regex_dfa, matrix_type)
+    graph_nfa = graph_to_nfa(graph, start_nodes, final_nodes)
+    adj_graph = AdjacencyMatrixFA(graph_nfa, matrix_type)
+    adj_intersect = AdjacencyMatrixFA.from_intersect(adj_graph, adj_regex, matrix_type)
 
-    intersect = intersect_automata(adj_matrix_by_reg, adj_matrix_by_graph)
+    adj_closure = adj_intersect.transitive_closure()
 
-    tr_cl = intersect.transitive_closure()
-
-    reg_raw_start_states = [
-        key
-        for key in adj_matrix_by_reg.states
-        if adj_matrix_by_reg.states[key] in adj_matrix_by_reg.start_states
-    ]
-    reg_raw_final_states = [
-        key
-        for key in adj_matrix_by_reg.states
-        if adj_matrix_by_reg.states[key] in adj_matrix_by_reg.final_states
-    ]
-
-    return {
-        (st, fn)
-        for (st, fn) in itertools.product(start_nodes, final_nodes)
-        for (st_reg, fn_reg) in itertools.product(
-            reg_raw_start_states, reg_raw_final_states
+    result = {
+        (
+            adj_intersect.num_to_state[start].value[0],
+            adj_intersect.num_to_state[final].value[0],
         )
-        if tr_cl[intersect.states[(st_reg, st)], intersect.states[(fn_reg, fn)]]
+        for start, final in zip(*adj_closure.nonzero())
+        if start in adj_intersect.start_states and final in adj_intersect.final_states
     }
+
+    return result
